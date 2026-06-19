@@ -23,73 +23,182 @@
     )
 }
 
-plot.maxdiff_hbmnl <- function(x, fit_simple = NULL,
-                               sort             = TRUE,
-                               label_wrap       = 40,
-                               zero_line        = TRUE,
+# ---- plot.maxdiff_hbmnl ---------------------------------------------------
+
+plot.maxdiff_hbmnl <- function(x,
+                               style            = c("distribution", "bar"),
                                scale            = c("raw", "probability"),
                                K_alts           = NULL,
+                               sort             = TRUE,
+                               label_wrap       = 40,
+                               n_bins           = 30,
                                include_footnote = TRUE,
                                ...) {
   if (!inherits(x, "maxdiff_hbmnl")) stop("x must be a maxdiff_hbmnl object.")
-  scale    <- match.arg(scale)
-  K_alts   <- K_alts %||% x$K
+  style  <- match.arg(style)
+  scale  <- match.arg(scale)
+  K_alts <- K_alts %||% x$K
+
+  if (style == "distribution")
+    .plot_hbmnl_dist(x, scale, K_alts, sort, label_wrap, n_bins, include_footnote)
+  else
+    .plot_hbmnl_bar(x, scale, K_alts, sort, label_wrap, include_footnote)
+}
+
+# Distribution style: point + CI spine + respondent histogram per item.
+.plot_hbmnl_dist <- function(x, scale, K_alts, sort, label_wrap, n_bins, include_footnote) {
   anchored <- isTRUE(x$anchored)
+  bm       <- x$beta_mean                         # N x M matrix
+  if (scale == "probability") bm <- to_probability_scale(bm, K_alts)
 
-  s <- summary(x, scale = scale, K_alts = K_alts)
-  s$item_label_wrapped <- stringr::str_wrap(s$item_label, width = label_wrap)
-  if (sort) {
-    s$item_label_wrapped <- factor(s$item_label_wrapped,
-                                   levels = s$item_label_wrapped[order(s$mean)])
-  } else {
-    s$item_label_wrapped <- factor(s$item_label_wrapped,
-                                   levels = rev(s$item_label_wrapped))
+  M     <- ncol(bm)
+  means <- colMeans(bm)
+  q025  <- apply(bm, 2, stats::quantile, probs = 0.025)
+  q975  <- apply(bm, 2, stats::quantile, probs = 0.975)
+
+  lab <- stringr::str_wrap(x$item_labels, width = label_wrap)
+
+  # Assign y positions 1..M; highest mean → top (y = M)
+  ord_asc        <- if (sort) order(means) else seq_len(M)
+  y_pos          <- integer(M)
+  y_pos[ord_asc] <- seq_len(M)
+
+  summary_df <- data.frame(
+    y    = y_pos,
+    mean = means,
+    q025 = q025,
+    q975 = q975
+  )
+
+  # Histogram bins: shared breaks across items so x-positions are comparable
+  x_pad  <- diff(range(bm, na.rm = TRUE)) * 0.02
+  breaks <- seq(min(bm, na.rm = TRUE) - x_pad,
+                max(bm, na.rm = TRUE) + x_pad,
+                length.out = n_bins + 1L)
+
+  max_half_ht <- 0.38   # histogram bars extend ±max_half_ht from item's y center
+
+  hist_rows <- vector("list", M)
+  for (j in seq_len(M)) {
+    bin_idx <- cut(bm[, j], breaks = breaks, labels = FALSE, include.lowest = TRUE)
+    counts  <- tabulate(bin_idx, nbins = n_bins)
+    mc      <- max(counts)
+    if (mc > 0L) {
+      ht <- counts / mc * max_half_ht
+      hist_rows[[j]] <- data.frame(
+        xmin = breaks[-length(breaks)],
+        xmax = breaks[-1L],
+        ymin = y_pos[j] - ht,
+        ymax = y_pos[j] + ht,
+        show = counts > 0L
+      )
+    }
   }
+  hist_df <- dplyr::bind_rows(hist_rows)
+  hist_df <- hist_df[hist_df$show, ]
 
+  zero_x  <- if (scale == "probability") 1 / K_alts else 0
   x_label <- if (scale == "probability") {
-    glue::glue("Probability of being chosen as MOST APPEALING (vs {K_alts - 1} avg alternatives)")
+    glue::glue("Probability score (vs {K_alts - 1L} avg alternatives)")
   } else {
-    "Partworth utility (posterior mean across respondents)"
+    "Partworth utility"
   }
-  zero_x <- if (scale == "probability") 1 / K_alts else 0
 
-  p <- ggplot2::ggplot(s, ggplot2::aes(x = .data$mean, y = .data$item_label_wrapped)) +
-    ggplot2::geom_pointrange(ggplot2::aes(xmin = .data$q025, xmax = .data$q975),
-                             color = .md_blue, linewidth = 0.4, size = 1.2) +
+  p <- ggplot2::ggplot() +
+    # Reference line
+    ggplot2::geom_vline(xintercept = zero_x, linetype = "dashed",
+                        color = .md_gray, linewidth = 0.4) +
+    # CI spine: 2.5th–97.5th percentile of respondent posterior means
+    ggplot2::geom_segment(
+      data = summary_df,
+      ggplot2::aes(x = .data$q025, xend = .data$q975,
+                   y = .data$y,    yend = .data$y),
+      color = .md_dark, linewidth = 1.0, alpha = 0.35
+    ) +
+    # Respondent histogram (symmetric about item y center)
+    ggplot2::geom_rect(
+      data = hist_df,
+      ggplot2::aes(xmin = .data$xmin, xmax = .data$xmax,
+                   ymin = .data$ymin, ymax = .data$ymax),
+      fill = .md_blue, color = NA, alpha = 0.60
+    ) +
+    # Mean point (hollow circle on top)
+    ggplot2::geom_point(
+      data = summary_df,
+      ggplot2::aes(x = .data$mean, y = .data$y),
+      shape = 21, fill = "white", color = .md_dark, size = 2.5, stroke = 1.3
+    ) +
+    ggplot2::scale_y_continuous(
+      breaks = seq_len(M),
+      labels = lab[ord_asc],
+      expand = ggplot2::expansion(add = 0.7)
+    ) +
     ggplot2::labs(
       x        = x_label,
       y        = NULL,
       title    = "MAXDIFF HB RESULTS",
-      subtitle = "Point: posterior mean.  Range: 2.5%–97.5% across respondent posterior means."
+      subtitle = paste0(
+        "Circle: mean across respondents.  ",
+        "Spine: 2.5– 97.5th pct range.  ",
+        "Histogram: respondent distribution."
+      )
     ) +
     .theme_maxdiff(base_size = 11) +
-    ggplot2::theme(panel.grid.major.y = ggplot2::element_blank())
-
-  if (zero_line)
-    p <- p + ggplot2::geom_vline(xintercept = zero_x, linetype = "dashed",
-                                 color = .md_dark, linewidth = 0.4)
-
-  if (!is.null(fit_simple)) {
-    simple_df <- data.frame(
-      item_label_wrapped = factor(stringr::str_wrap(fit_simple$item_label, width = label_wrap),
-                                  levels = levels(s$item_label_wrapped)),
-      simple = fit_simple$score
+    ggplot2::theme(
+      panel.grid.major.y = ggplot2::element_blank(),
+      panel.grid.minor.y = ggplot2::element_blank()
     )
-    rng_pw   <- range(c(s$q025, s$q975), na.rm = TRUE)
-    rng_pw   <- rng_pw + c(-1, 1) * 0.05 * diff(rng_pw)
-    rng_simp <- c(-1, 1)
-    simple_df$simple_scaled <- (simple_df$simple - rng_simp[1]) /
-      diff(rng_simp) * diff(rng_pw) + rng_pw[1]
-    p <- p +
-      ggplot2::geom_point(data = simple_df,
-                          ggplot2::aes(x = .data$simple_scaled, y = .data$item_label_wrapped),
-                          shape = 4, color = .md_red, size = 2.2, inherit.aes = FALSE)
-  }
 
   if (include_footnote)
     p <- p + ggplot2::labs(caption = .interpretation_footnote(scale, anchored, K_alts))
   p
 }
+
+# Bar style: simple horizontal bars, colored by anchor status when anchored.
+.plot_hbmnl_bar <- function(x, scale, K_alts, sort, label_wrap, include_footnote) {
+  anchored <- isTRUE(x$anchored)
+  bm       <- x$beta_mean
+  if (scale == "probability") bm <- to_probability_scale(bm, K_alts)
+
+  means  <- colMeans(bm)
+  zero_x <- if (scale == "probability") 1 / K_alts else 0
+
+  df <- data.frame(
+    label = stringr::str_wrap(x$item_labels, width = label_wrap),
+    score = means
+  )
+  if (sort)
+    df$label <- factor(df$label, levels = df$label[order(df$score)])
+
+  if (anchored) {
+    df$grp     <- ifelse(df$score >= zero_x, "above", "below")
+    fill_vals  <- c(above = .md_blue, below = .md_red)
+  } else {
+    df$grp     <- "all"
+    fill_vals  <- c(all = .md_blue)
+  }
+
+  x_label <- if (scale == "probability") "Probability score" else "Partworth utility"
+
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$score, y = .data$label,
+                                        fill = .data$grp)) +
+    ggplot2::geom_col(width = 0.65) +
+    ggplot2::geom_vline(xintercept = zero_x, color = .md_dark, linewidth = 0.5) +
+    ggplot2::scale_fill_manual(values = fill_vals, guide = "none") +
+    ggplot2::labs(
+      x     = x_label,
+      y     = NULL,
+      title = "MAXDIFF HB RESULTS"
+    ) +
+    .theme_maxdiff(base_size = 11) +
+    ggplot2::theme(panel.grid.major.y = ggplot2::element_blank())
+
+  if (include_footnote)
+    p <- p + ggplot2::labs(caption = .interpretation_footnote(scale, anchored, K_alts))
+  p
+}
+
+# ---- plot.maxdiff_simple --------------------------------------------------
 
 plot.maxdiff_simple <- function(x, label_wrap = 40, include_footnote = TRUE, ...) {
   d           <- x
@@ -114,6 +223,8 @@ plot.maxdiff_simple <- function(x, label_wrap = 40, include_footnote = TRUE, ...
     )
   p
 }
+
+# ---- plot.maxdiff_subgroup ------------------------------------------------
 
 plot.maxdiff_subgroup <- function(x, metric = c("hbmnl", "simple"),
                                   sort_by = NULL, label_wrap = 40,
@@ -164,7 +275,7 @@ plot.maxdiff_subgroup <- function(x, metric = c("hbmnl", "simple"),
       ggplot2::labs(
         x = x_label, y = NULL, color = "Subgroup",
         title    = "MAXDIFF SUBGROUP COMPARISON (HB MNL)",
-        subtitle = "Point: subgroup posterior mean.  Range: 2.5%–97.5% across respondents."
+        subtitle = "Point: subgroup posterior mean.  Range: 2.5–97.5% across respondents."
       )
   } else {
     zero_x <- 0
