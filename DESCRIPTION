@@ -1,0 +1,35 @@
+Package: maxdiff
+Title: Hierarchical Bayesian MaxDiff (Best-Worst Scaling) Analysis
+Version: 0.0.1
+Date: 2026-06-18
+Authors@R: person("Dan", "Yavorsky", email = "dyavorsky@gmail.com",
+    role = c("aut", "cre"))
+Description: Design, fit, and visualize MaxDiff (best-worst scaling) studies
+    using a hierarchical Bayesian multinomial logit model. The HB MNL Gibbs
+    sampler is self-contained — adapted from Peter Rossi's bayesm package
+    (Rossi, Allenby, and McCulloch, 2024) with an extension to support
+    ragged choice sets. Ragged choice sets enable the exact best-then-worst
+    joint likelihood: K alternatives for the best pick, K-1 for the worst
+    (excluding the best item). See Rossi, Allenby, and McCulloch (2024,
+    ISBN:978-1-118-97218-3) for the statistical foundation.
+License: MIT
+Encoding: UTF-8
+Depends: R (>= 4.1)
+Imports:
+    choiceDes,
+    dplyr,
+    ggplot2,
+    glue,
+    Rcpp,
+    stats,
+    stringr,
+    tibble
+LinkingTo:
+    Rcpp,
+    RcppArmadillo
+Suggests:
+    gt,
+    knitr,
+    quarto,
+    tidyr
+VignetteBuilder: knitr, quarto

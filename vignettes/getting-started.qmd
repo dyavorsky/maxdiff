@@ -1,0 +1,202 @@
+---
+title: "Getting Started with maxdiff"
+vignette: >
+  %\VignetteIndexEntry{Getting Started with maxdiff}
+  %\VignetteEngine{quarto::html}
+  %\VignetteEncoding{UTF-8}
+---
+
+## What is MaxDiff?
+
+MaxDiff (Maximum Difference Scaling, also known as Best-Worst Scaling) is a
+conjoint-style survey method where respondents repeatedly choose the **best**
+and **worst** items from a small shown set. Over many tasks, these choices
+reveal partworth utilities for each item on a common ratio scale.
+
+The workhorse estimator is a hierarchical Bayesian multinomial logit (HB MNL)
+model:
+
+-   **Individual level**: each respondent has their own partworth vector
+    $\beta_i$ drawn from a mixture-of-normals population distribution.
+-   **Population level**: the mixture is updated across respondents via a
+    Gibbs sampler (Rossi, Allenby, and McCulloch 2024).
+-   **Exact joint likelihood**: each task produces *two* MNL observations —
+    a K-alternative best pick and a (K-1)-alternative worst pick, jointly
+    encoding the best-then-worst selection.
+
+## Simulated example
+
+### 1  Generate a design
+
+```{r}
+#| eval: false
+library(maxdiff)
+
+set.seed(1)
+design <- make_design(
+  n_items          = 8,
+  n_versions       = 50,
+  n_tasks          = 8,
+  n_items_per_task = 4
+)
+head(design)
+```
+
+The output is a data frame with columns `Version`, `Task`, and `Item1`–`Item4`.
+
+### 2  Simulate responses
+
+```{r}
+#| eval: false
+# True population partworths (item 1 best, item 8 worst)
+true_betas <- c(2.0, 1.5, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0)
+
+simulate_respondent <- function(version, true_b, design) {
+  tasks <- design[design$Version == version, ]
+  best_picks  <- integer(nrow(tasks))
+  worst_picks <- integer(nrow(tasks))
+  for (t in seq_len(nrow(tasks))) {
+    items <- as.integer(tasks[t, paste0("Item", 1:4)])
+    utils <- true_b[items] + stats::rnorm(4, sd = 1)
+    best_picks[t]  <- items[which.max(utils)]
+    worst_picks[t] <- items[which.min(utils)]
+  }
+  list(best = best_picks, worst = worst_picks)
+}
+
+n_resp   <- 200
+versions <- sample(1:50, n_resp, replace = TRUE)
+responses <- data.frame(
+  resp_id = 1:n_resp,
+  version = versions,
+  matrix(0L, nrow = n_resp, ncol = 16,
+         dimnames = list(NULL, c(paste0("best",  1:8),
+                                  paste0("worst", 1:8))))
+)
+
+for (i in 1:n_resp) {
+  r <- simulate_respondent(versions[i], true_betas, design)
+  responses[i, paste0("best",  1:8)] <- r$best
+  responses[i, paste0("worst", 1:8)] <- r$worst
+}
+```
+
+### 3  Simple scoring (fast, no MCMC)
+
+```{r}
+#| eval: false
+simple_fit <- fit_simple(
+  responses         = responses,
+  design            = design,
+  version_col       = "version",
+  best_cols         = setNames(paste0("best",  1:8), as.character(1:8)),
+  worst_cols        = setNames(paste0("worst", 1:8), as.character(1:8)),
+  item_labels       = paste("Item", 1:8)
+)
+print(simple_fit)
+plot(simple_fit)
+```
+
+The simple model confirms item 1 scores highest and item 8 scores lowest.
+
+### 4  HB MNL estimation
+
+```{r}
+#| eval: false
+hb_fit <- fit_hbmnl(
+  responses         = responses,
+  design            = design,
+  version_col       = "version",
+  best_cols         = setNames(paste0("best",  1:8), as.character(1:8)),
+  worst_cols        = setNames(paste0("worst", 1:8), as.character(1:8)),
+  item_labels       = paste("Item", 1:8),
+  R                 = 10000L,
+  burnin            = 5000L,
+  keep              = 5L,
+  nprint            = 2000L,
+  seed              = 42L
+)
+print(hb_fit)
+```
+
+### 5  Inspect results
+
+```{r}
+#| eval: false
+# Posterior mean summary
+summary(hb_fit)
+
+# Respondent-level partworths
+coef(hb_fit)
+
+# Waterfall plot
+plot(hb_fit)
+
+# Probability-scale plot (Sawtooth-compatible)
+plot(hb_fit, scale = "probability")
+```
+
+Recovered posterior means should correlate strongly with `true_betas`:
+
+```{r}
+#| eval: false
+overall_means <- colMeans(hb_fit$beta_mean)
+cat("Rank correlation with truth:",
+    round(cor(overall_means, true_betas, method = "spearman"), 3), "\n")
+```
+
+### 6  Subgroup analysis
+
+```{r}
+#| eval: false
+# Split on a simulated demographic
+group_a <- responses$resp_id <=  100
+group_b <- responses$resp_id  > 100
+
+sg <- subgroup_summary(
+  fit_hbmnl = hb_fit,
+  subgroups = list(GroupA = group_a, GroupB = group_b)
+)
+plot(sg)
+
+# Significance testing
+cmp <- compare_groups(hb_fit, group_a, group_b, method = "welch")
+cmp[cmp$sig_95, c("item_label", "mean_a", "mean_b", "p", "cohens_d")]
+```
+
+### 7  Publication table
+
+```{r}
+#| eval: false
+# Requires the gt package
+summary_table(hb_fit)
+summary_table(hb_fit, scale = "probability")
+summary_table(hb_fit, subgroup_results = sg)
+```
+
+## Probability scale
+
+The **Sawtooth probability scale** transforms raw partworths to (0, 1):
+
+$$p_j = \frac{e^{\beta_j}}{K - 1 + e^{\beta_j}}$$
+
+An average item scores $1/K$. An item with utility $\to +\infty$ scores 1.
+The scale is interpretable as "probability of being chosen best when shown
+alone with K-1 average items."
+
+```{r}
+#| eval: false
+to_probability_scale(colMeans(hb_fit$beta_mean), K_alts = hb_fit$K)
+```
+
+## Acknowledgments
+
+The HB MNL Gibbs sampler in this package is a direct adaptation of
+`rhierMnlRwMixture` from Peter Rossi's **bayesm** package (Rossi 2019, CRAN).
+The ragged choice-set extension enabling exact best-then-worst joint likelihood
+was implemented by Dan Yavorsky. All statistical credit for the sampler
+algorithm goes to:
+
+> Rossi, P. E., Allenby, G. M., & McCulloch, R. (2024).
+> *Bayesian Statistics and Marketing* (2nd ed.). Wiley.
+> ISBN 978-1-118-97218-3.

@@ -1,0 +1,30 @@
+useDynLib(maxdiff)
+importFrom(Rcpp, evalCpp)
+importFrom(choiceDes, tradeoff.des)
+importFrom(dplyr, bind_rows, group_by, summarise)
+importFrom(ggplot2, ggplot, aes, geom_point, geom_pointrange, geom_col,
+           geom_vline, labs, scale_x_continuous, scale_color_manual,
+           scale_fill_manual, theme_minimal, theme, element_text,
+           element_blank, element_line, element_rect, position_dodge)
+importFrom(glue, glue)
+importFrom(stats, optim, sd, quantile, pt, qt, var, setNames)
+importFrom(stringr, str_wrap)
+importFrom(tibble, tibble, as_tibble)
+
+export(fit_hbmnl)
+export(fit_simple)
+export(make_design)
+export(assemble_data)
+export(subgroup_summary)
+export(compare_groups)
+export(to_probability_scale)
+export(summary_table)
+
+S3method(print, maxdiff_hbmnl)
+S3method(summary, maxdiff_hbmnl)
+S3method(coef, maxdiff_hbmnl)
+S3method(plot, maxdiff_hbmnl)
+S3method(print, maxdiff_simple)
+S3method(plot, maxdiff_simple)
+S3method(print, maxdiff_subgroup)
+S3method(plot, maxdiff_subgroup)
