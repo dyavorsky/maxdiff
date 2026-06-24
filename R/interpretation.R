@@ -2,9 +2,10 @@
 
 .interpretation_footnote <- function(scale = c("raw", "probability"),
                                      anchored = FALSE,
-                                     K_alts = NULL) {
+                                     K_alts = NULL,
+                                     wrap_width = 100) {
   scale <- match.arg(scale)
-  if (scale == "raw") {
+  txt <- if (scale == "raw") {
     if (anchored) {
       paste0(
         "Raw partworths on the anchored scale. The anchor sits at 0; ",
@@ -34,4 +35,5 @@
       )
     }
   }
+  paste(strwrap(txt, width = wrap_width), collapse = "\n")
 }

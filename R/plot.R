@@ -76,7 +76,7 @@ plot.maxdiff_hbmnl <- function(x,
                 max(bm, na.rm = TRUE) + x_pad,
                 length.out = n_bins + 1L)
 
-  max_half_ht <- 0.38   # histogram bars extend ±max_half_ht from item's y center
+  max_bar_ht <- 0.40   # histogram bars extend upward from item's y baseline
 
   hist_rows <- vector("list", M)
   for (j in seq_len(M)) {
@@ -84,11 +84,11 @@ plot.maxdiff_hbmnl <- function(x,
     counts  <- tabulate(bin_idx, nbins = n_bins)
     mc      <- max(counts)
     if (mc > 0L) {
-      ht <- counts / mc * max_half_ht
+      ht <- counts / mc * max_bar_ht
       hist_rows[[j]] <- data.frame(
         xmin = breaks[-length(breaks)],
         xmax = breaks[-1L],
-        ymin = y_pos[j] - ht,
+        ymin = y_pos[j],
         ymax = y_pos[j] + ht,
         show = counts > 0L
       )
@@ -219,7 +219,10 @@ plot.maxdiff_simple <- function(x, label_wrap = 40, include_footnote = TRUE, ...
 
   if (include_footnote)
     p <- p + ggplot2::labs(
-      caption = "Blue bars: fraction of times item was picked BEST out of times shown. Gray bars: fraction picked WORST."
+      caption = paste(strwrap(
+        "Blue bars: fraction of times item was picked BEST out of times shown. Gray bars: fraction picked WORST.",
+        width = 100
+      ), collapse = "\n")
     )
   p
 }
